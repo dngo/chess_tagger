@@ -1,0 +1,12 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "chess_tagger"
+
+fen = ARGV.join(" ")
+if fen.empty?
+  warn "usage: chess-tagger FEN"
+  exit 1
+end
+
+puts ChessTagger.tag(fen)

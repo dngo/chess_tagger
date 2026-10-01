@@ -1,0 +1,97 @@
+# frozen_string_literal: true
+
+module ChessTagger
+  # Tags the library can return, in display order.
+  # Descriptions follow the usual meanings in chess training literature
+  # (Lichess puzzle themes, Chess.com's tactics guide, and standard manuals).
+  CATALOG = [
+    ["mate in 1", "Side to move can force checkmate in one move."],
+    ["mate in 2", "Side to move can force checkmate in two moves."],
+    ["mate in 3", "Side to move can force checkmate in three moves. Quiet first moves are not searched; checks, captures, and promotions are."],
+    ["checkmate", "The side to move is already checkmated."],
+    ["stalemate", "The side to move has no legal move and is not in check."],
+    ["stalemate sacrifice", "A move forces the opponent to stalemate the side to move."],
+    ["perpetual check", "A checking sequence repeats the position against every defense."],
+    ["fork", "One piece attacks two or more targets at once."],
+    ["pawn fork", "A pawn forks two pieces."],
+    ["knight fork", "A knight forks two or more targets."],
+    ["royal fork", "A piece forks the king and the queen."],
+    ["double attack", "One move creates two threats, whether from one piece or two."],
+    ["pin", "A piece is pinned to a more valuable piece, or to the king."],
+    ["absolute pin", "A piece is pinned to its own king and cannot legally move off the line."],
+    ["relative pin", "A piece is pinned to a more valuable piece that is not the king."],
+    ["skewer", "A more valuable piece is attacked in front of a less valuable one on the same line."],
+    ["discovered attack", "Moving a piece uncovers an attack from a piece behind it."],
+    ["discovered check", "Moving a piece uncovers check from a piece behind it."],
+    ["double check", "Two pieces give check at the same time, so the king must move."],
+    ["cross-check", "A reply to check is itself check."],
+    ["deflection", "A defender is driven off the piece or square it was guarding."],
+    ["decoy", "An enemy piece is lured onto a square where it can be exploited."],
+    ["attraction", "The enemy king is drawn onto a fatal square."],
+    ["removing the defender", "A capture eliminates the only defender of another piece."],
+    ["overloading", "One piece is the sole defender of more than one attacked unit."],
+    ["interference", "A piece is dropped onto an enemy line and cuts a defender off from its target."],
+    ["clearance", "A piece leaves a line or square so another piece can use it."],
+    ["clearance sacrifice", "Material is given up to clear a line or square."],
+    ["x-ray attack", "A long-range piece attacks an enemy unit through another piece."],
+    ["x-ray defense", "A long-range piece defends one of its own units through an enemy piece."],
+    ["zwischenzug", "An in-between move, also called an intermezzo, is stronger than the expected recapture."],
+    ["zwischencheck", "The in-between move is check."],
+    ["undermining", "A capture removes the pawn or piece that was supporting another unit."],
+    ["trapped piece", "An enemy piece has no safe square and can be won."],
+    ["domination", "An enemy piece has no legal square even though it is not currently attacked."],
+    ["desperado", "A piece that is lost anyway captures something before it goes."],
+    ["hanging piece", "An enemy piece is attacked and not defended."],
+    ["sacrifice", "Material is offered to build a forcing attack."],
+    ["queen sacrifice", "The queen is given up for a forcing attack."],
+    ["exchange sacrifice", "A rook is given up for a minor piece."],
+    ["greek gift", "A bishop sacrifice on h7 or h2 opens the castled king, with a knight ready to follow."],
+    ["demolition", "A piece sacrifice strips the pawn shield in front of the king."],
+    ["windmill", "A discovered check repeats, sweeping material with each swing. Also called a see-saw."],
+    ["back rank", "The enemy king is shut in on the back rank and can be checked there."],
+    ["back-rank mate", "Checkmate along the back rank against a king blocked by its own pieces."],
+    ["smothered mate", "A knight mates a king that is boxed in by its own pieces."],
+    ["arabian mate", "A rook and knight mate a king in the corner."],
+    ["anastasia mate", "A rook or queen mates a king on the edge while a knight covers the flight squares."],
+    ["boden mate", "Two bishops on crossing diagonals mate a king blocked by its own pieces."],
+    ["hook mate", "A rook, knight, and pawn mate, with the knight protecting the rook and a pawn protecting the knight."],
+    ["epaulette mate", "A queen or rook mates a king whose own pieces block both side squares, like epaulettes."],
+    ["dovetail mate", "A queen mates from a diagonal step away while the king's own pieces block the squares beside it. Also called Cozio's mate."],
+    ["swallow's tail mate", "A protected queen mates from the square directly in front of the king while its own pieces block the diagonal escapes. Also called a guéridon mate."],
+    ["opera mate", "A rook mates on the back rank, protected by a bishop, with an enemy piece restricting the king."],
+    ["double bishop mate", "The bishop pair delivers mate, both bishops covering squares around the king."],
+    ["corridor mate", "A rook or queen mates a king along the edge file."],
+    ["ladder mate", "Two rooks drive the king to the edge and mate. Also called a lawnmower mate."],
+    ["kill box mate", "A queen and rook mate by cutting off adjacent ranks and files around the king."],
+    ["corner mate", "The king is mated in the corner of the board."],
+    ["support mate", "The mating piece is protected on a square next to the king."],
+    ["promotion", "A pawn can promote."],
+    ["underpromotion", "Promoting to a knight, bishop, or rook is the forcing move."],
+    ["en passant", "An en passant capture is legal."],
+    ["battery", "Two long-range pieces are stacked on a line aimed at an enemy unit."],
+    ["alekhine's gun", "Two rooks and a queen are stacked on one line, with the queen behind the rooks."],
+    ["seventh rank", "Both rooks have reached the seventh rank."],
+    ["blind swine", "Both rooks are on the seventh rank against a king stuck on the back rank."],
+    ["exposed king", "The enemy king has lost its pawn shield, or is caught in the center."],
+    ["attacking f2/f7", "The f2 or f7 pawn, defended only by the king at the start, is under attack."],
+    ["advanced pawn", "A pawn has reached the sixth rank or beyond."],
+    ["passed pawn", "A pawn has no enemy pawn that can stop it on its file or the files beside it."],
+    ["connected passed pawns", "Two passed pawns stand on adjacent files."],
+    ["pawn breakthrough", "A pawn move creates a new passed pawn."],
+    ["quiet move", "A move that neither checks nor captures creates a fork, skewer, or discovered attack."],
+    ["tempo", "A check also attacks another piece, gaining time."],
+    ["counter-threat", "Instead of saving a hanging piece, a move creates a greater threat."],
+    ["hit-and-run", "A piece that was attacked captures and lands on a safe square."],
+    ["opposition", "In a king ending the two kings face each other with one square between them."],
+    ["zugzwang", "Every legal move in a king and pawn ending drops a pawn."],
+    ["insufficient material", "Neither side has enough material to force checkmate."]
+  ].freeze
+
+  TAGS = CATALOG.map(&:first).freeze
+
+  module_function
+
+  def catalog
+    CATALOG.map { |tag, description| { tag: tag, description: description } }
+  end
+end
