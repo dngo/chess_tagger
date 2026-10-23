@@ -19,7 +19,7 @@ module ChessTagger
       names << "anastasia mate" if anastasia?(position, king, checkers, enemy, mating_color)
       names << "hook mate" if hook?(position, king, checkers, enemy, mating_color)
       names << "boden mate" if boden?(position, king, checkers, enemy, mating_color)
-      names << "double bishop mate" if double_bishop?(position, king, checkers, mating_color)
+      names << "double bishop mate" if double_bishop?(position, king, checkers, enemy, mating_color)
       names << "epaulette mate" if epaulette?(position, king, checkers, enemy)
       names << "dovetail mate" if dovetail?(position, king, checkers, enemy)
       names << "swallow's tail mate" if swallows_tail?(position, king, checkers, enemy, mating_color)
@@ -90,20 +90,42 @@ module ChessTagger
     end
 
     def boden?(position, king, checkers, enemy, mating_color)
-      double_bishop?(position, king, checkers, mating_color) &&
-        neighbors(position, king).any? { |flight| own?(position, flight, enemy) }
+      partner = bishop_partner(position, king, checkers, mating_color)
+      return false unless partner
+      return false unless neighbors(position, king).any? { |flight| own?(position, flight, enemy) }
+
+      crossing?(position, king, checkers.find { |square| position.kind(position.squares[square]) == "b" }, partner)
     end
 
-    def double_bishop?(position, king, checkers, mating_color)
-      bishops = position.piece_squares(mating_color, ["b"])
-      return false unless bishops.size >= 2
+    def double_bishop?(position, king, checkers, enemy, mating_color)
+      !bishop_partner(position, king, checkers, mating_color).nil? &&
+        !boden?(position, king, checkers, enemy, mating_color)
+    end
 
+    # The second bishop of a bishop-pair mate: the mate falls apart without it.
+    def bishop_partner(position, king, checkers, mating_color)
       mating = checkers.find { |square| position.kind(position.squares[square]) == "b" }
-      return false unless mating
+      return unless mating
 
-      (bishops - [mating]).any? do |bishop|
-        neighbors(position, king).any? { |flight| bishop_attacks?(position, bishop, flight) }
+      (position.piece_squares(mating_color, ["b"]) - [mating]).find do |bishop|
+        neighbors(position, king).any? { |flight| bishop_attacks?(position, bishop, flight) } &&
+          !mate_without?(position, bishop)
       end
+    end
+
+    def mate_without?(position, square)
+      copy = position.dup
+      copy.squares[square] = nil
+      copy.checkmate?
+    end
+
+    # Boden's bishops sweep the king from crossing diagonals, a double bishop mate from parallel ones.
+    def crossing?(position, king, checker, partner)
+      slope = lambda do |from, to|
+        (position.file(to) - position.file(from)) * (position.rank(to) - position.rank(from)) <=> 0
+      end
+      flights = neighbors(position, king).select { |flight| bishop_attacks?(position, partner, flight) }
+      flights.all? { |flight| slope.call(partner, flight) == -slope.call(checker, king) }
     end
 
     def epaulette?(position, king, checkers, enemy)
@@ -144,7 +166,8 @@ module ChessTagger
 
         position.square(file, rank)
       end
-      diagonals.count { |square| own?(position, square, enemy) } >= 2
+      blockers = neighbors(position, king).select { |square| own?(position, square, enemy) }
+      blockers.size == 2 && (blockers - diagonals).empty?
     end
 
     def opera?(position, king, checkers, enemy, mating_color)
@@ -167,18 +190,13 @@ module ChessTagger
     end
 
     def kill_box?(position, king, checkers, mating_color)
-      queens = position.piece_squares(mating_color, ["q"])
-      rooks = position.piece_squares(mating_color, ["r"])
-      return false if queens.empty? || rooks.empty?
+      rook = checkers.find { |square| position.kind(position.squares[square]) == "r" && orthogonal_step?(position, square, king) }
+      return false unless rook
 
-      checker = checkers.find { |square| "qr".include?(position.kind(position.squares[square])) }
-      return false unless checker
-
-      partner = (queens + rooks - [checker]).find do |square|
-        (position.rank(square) - position.rank(king)).abs == 1 ||
-          (position.file(square) - position.file(king)).abs == 1
+      position.piece_squares(mating_color, ["q"]).any? do |queen|
+        position.attackers(rook, mating_color).include?(queen) &&
+          neighbors(position, king).any? { |flight| flight != rook && position.attackers(flight, mating_color).include?(queen) }
       end
-      !partner.nil?
     end
 
     def support?(position, king, checkers, mating_color)

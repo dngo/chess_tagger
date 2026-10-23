@@ -64,6 +64,7 @@ module ChessTagger
       them = @pos.enemy
       sole = sole_defenders(@pos, them)
       our_hanging = hanging_squares(@pos, us)
+      standing_lines = line_records(@pos).map { |record| line_key(record) }
 
       @pos.legal_moves.each do |move|
         child = @pos.make(move)
@@ -104,7 +105,7 @@ module ChessTagger
         add("double check", move: move, detail: "#{move.uci} checks with two pieces") if check && child.attackers(child.king_square(them), us).size >= 2
 
         record_forks(child, only: move.to, move: move)
-        record_line_motifs(child, move: move)
+        record_line_motifs(child, move: move, skip: standing_lines)
 
         if check && back_rank_check?(child, them)
           add("back rank", move: move, detail: "#{move.uci} checks the king on the back rank")
@@ -129,8 +130,10 @@ module ChessTagger
     def scan_mate
       return if @tags.key?("mate in 1")
 
-      distance = MateSearch.new(@pos.dup).shortest(max_moves: 3)
-      add("mate in #{distance}", detail: "Forced checkmate in #{distance}") if distance && distance > 1
+      MateSearch.new(@pos.dup).solutions(max_moves: 3) do |moves, move, patterns|
+        add("mate in #{moves}", move: move, detail: "#{move.uci} forces checkmate in #{moves}")
+        patterns.each { |tag| add(tag, move: move, detail: "#{move.uci} forces #{tag} in #{moves}") }
+      end
     end
 
     def record_forks(pos, only: nil, move: nil)
@@ -180,9 +183,13 @@ module ChessTagger
       pos.attackers(target, pos.color_of(victim)).empty?
     end
 
-    def record_line_motifs(pos, move: nil, only_fronts: nil)
+    # With `skip`, a line that already stood before the move is left out, so a pin,
+    # skewer, x-ray or battery is only credited to the move that creates it. A
+    # relative pin is only credited when it ties a piece to a rook or queen.
+    def record_line_motifs(pos, move: nil, skip: nil)
       line_records(pos).each do |record|
-        next if only_fronts && !only_fronts.include?(record[:front])
+        next if skip&.include?(line_key(record))
+        next if move && record[:type] == "relative pin" && !binding_pin?(pos, record)
 
         case record[:type]
         when "absolute pin"
@@ -204,6 +211,15 @@ module ChessTagger
       end
     end
 
+    # A pinned pawn, or a piece pinned to a minor piece, rarely decides anything.
+    def binding_pin?(pos, record)
+      pos.kind(pos.squares[record[:front]]) != "p" && pos.value(pos.squares[record[:back]]) >= 5
+    end
+
+    def line_key(record)
+      record.values_at(:type, :slider, :front, :back)
+    end
+
     def line_records(pos)
       color = @pos.turn
       records = []
@@ -222,7 +238,7 @@ module ChessTagger
               records << record("absolute pin", slider, first, second, "pins the #{name_of(front)} to the king")
             elsif pos.value(back) > pos.value(front) && attacker_safe?(pos, slider, first)
               records << record("relative pin", slider, first, second, "pins the #{name_of(front)} to the #{name_of(back)}")
-            elsif pos.value(front) > pos.value(back) && attacker_safe?(pos, slider, first)
+            elsif skewer?(pos, slider, first, second)
               records << record("skewer", slider, first, second, "skewers the #{name_of(front)} and the #{name_of(back)}")
             elsif pos.value(front) == pos.value(back) && pos.value(front) >= 3
               records << record("x-ray attack", slider, first, second, "attacks through the #{name_of(front)} toward the #{name_of(back)}")
@@ -242,6 +258,23 @@ module ChessTagger
 
     def record(type, slider, front, back, text)
       { type: type, front: front, back: back, slider: slider, detail: "#{algebraic(slider)} #{text}" }
+    end
+
+    # The front piece must move or be lost, and the piece behind it must be worth winning.
+    def skewer?(pos, slider, front, back)
+      return false unless pos.value(pos.squares[front]) > pos.value(pos.squares[back])
+      return false unless pos.value(pos.squares[back]) >= 3
+      return false unless attacker_safe?(pos, slider, front)
+
+      worth_taking?(pos, slider, front) && worth_taking?(pos, slider, back, except: front)
+    end
+
+    # Capturing wins material: the target is loose, or worth more than the capturer.
+    def worth_taking?(pos, slider, target, except: nil)
+      victim = pos.squares[target]
+      return true if pos.value(victim) > pos.value(pos.squares[slider])
+
+      (pos.attackers(target, pos.color_of(victim)) - [except]).empty?
     end
 
     def attacker_safe?(pos, slider, front)
@@ -492,17 +525,23 @@ module ChessTagger
       add("undermining", move: move, detail: "#{move.uci} removes the pawn supporting another pawn")
     end
 
+    # The move offers a piece that a sole defender can capture, and capturing leaves
+    # one of the pieces it was defending to be won.
     def consider_deflection(move, child, sole)
-      sole.each do |defender, targets|
-        next if captured_square(@pos, move) == defender
-        next unless child.squares[defender]
-        next unless child.attackers(defender, @pos.turn).any?
-        next unless hanging?(child, defender) || cheaper_attacker?(child, defender)
+      return unless piece_unsafe?(child, move.to)
 
-        threatened = targets.select { |square| child.squares[square] && child.attackers(square, @pos.turn).any? }
-        next if threatened.empty?
+      child.attackers(move.to, @pos.enemy).each do |origin|
+        next unless sole.key?(origin)
 
-        add("deflection", move: move, detail: "#{move.uci} attacks the defender on #{algebraic(defender)}")
+        reply = child.legal_moves.find { |candidate| candidate.from == origin && candidate.to == move.to }
+        next unless reply
+
+        child.apply!(reply)
+        won = sole[origin].select do |target|
+          target != move.to && child.squares[target] && child.value(child.squares[target]) >= 3 && piece_unsafe?(child, target)
+        end
+        child.undo!
+        add("deflection", move: move, detail: "#{move.uci} pulls the defender off #{algebraic(won.first)}") if won.any?
       end
     end
 

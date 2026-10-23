@@ -54,4 +54,18 @@ gem "chess_tagger", path: "chess_tagger"
 
 `mate in 1` and `mate in 2` try every legal move. `mate in 3` only tries checks, captures, and promotions before the mating move, so a quiet three-move mate can be missed. The search gives up at a node budget instead of guessing. A tag is emitted only when the mate is proved.
 
+Every first move that forces the shortest mate is listed in the hit's `moves`. A named pattern such as `back-rank mate` is attached to those moves when every defence ends in it, so a mate in 2 reports the pattern of its final position, not only a mate in 1.
+
 Zwischenzug, decoy, attraction, windmill, and perpetual check are recognized from the geometry of a short forcing try, not from a full engine evaluation. A tag means the pattern is available, not that it is the best move.
+
+## Measuring accuracy
+
+`bench/lichess_puzzles.rb` scores the tags against the themes of the [Lichess puzzle database](https://database.lichess.org/#puzzles), and `bench/mate_patterns.rb` scores the named mates against the final position of each mating line:
+
+```bash
+curl -s https://database.lichess.org/lichess_db_puzzle.csv.zst | zstd -dc | head -n 60001 > puzzles.csv
+JOBS=8 ruby -Ilib bench/lichess_puzzles.rb puzzles.csv 3000
+ruby -Ilib bench/mate_patterns.rb puzzles.csv 20000
+```
+
+Lichess labels the main idea of a puzzle, not every motif on the board, so precision is a floor and recall is the figure to trust. "Move hit" also requires the tag's `moves` to include the solution's first move.
